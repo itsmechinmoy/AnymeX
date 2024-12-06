@@ -15,6 +15,16 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Download last SHA artifact
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: notify-release.yml
+          name: last-sha
+          path: .
+        continue-on-error: true
 
       - name: Set up Python
         uses: actions/setup-python@v2
@@ -131,3 +141,18 @@ jobs:
           curl -X POST "${{ env.DISCORD_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
             -d "$DISCORD_DATA"
+
+      - name: Save Current SHA for Next Run
+        run: echo ${{ github.sha }} > last_sha.txt
+
+      - name: Upload Current SHA as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: last-sha
+          path: last_sha.txt
+
+      - name: Upload Commit Log as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: commit-log
+          path: commit_log.txt
