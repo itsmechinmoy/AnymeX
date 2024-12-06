@@ -1,121 +1,170 @@
 name: Build and Release AnymeX
-
-on:
+'on':
   push:
     tags:
-      - "v*"
-  workflow_dispatch:
-
+      - v*
+  
+  workflow_dispatch: null
 
 jobs:
-  generate-changelog:
+  prepare-release:
     runs-on: ubuntu-latest
+    outputs:
+      last_sha: '${{ steps.get-last-sha.outputs.last_sha }}'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Generate Changelog
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+     
+      - name: Download last SHA artifact
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: release.yml
+          name: last-sha
+          path: .
+        continue-on-error: true
+     
+      - name: Get Last SHA
+        id: get-last-sha
         run: |
-          #!/bin/bash
-          PREVIOUS_TAG=$(git tag --sort=-v:refname | grep -vE '(-alpha|-beta|-rc)' | head -n 2 | tail -n 1)
-          CURRENT_TAG=${GITHUB_REF#refs/tags/}
-          if [ -z "$PREVIOUS_TAG" ]; then
-            PREVIOUS_TAG=$(git rev-list --max-parents=0 HEAD)
+          if [ -f last_sha.txt ]; then
+            LAST_SHA=$(cat last_sha.txt)
+          else
+            LAST_SHA=$(git rev-list --max-parents=0 HEAD)
           fi
-          # Initialize changelog with the current tag as the version
-          echo "## $CURRENT_TAG" >> CHANGELOG.md
-          echo "" >> CHANGELOG.md
-          # Function to add section if commits exist
-          add_section() {
-            local section_title="$1"
-            local grep_pattern="$2"
-            local commits=$(git log $PREVIOUS_TAG..$CURRENT_TAG --grep="$grep_pattern" --pretty=format:'* [`%h`](https://github.com/RyanYuuki/AnymeX/commit/%h): %s')
-            
-            if [ ! -z "$commits" ]; then
-              echo "## $section_title" >> CHANGELOG.md
-              echo "$commits" >> CHANGELOG.md
-              echo "" >> CHANGELOG.md
-            fi
-          }
-          # Add sections dynamically
-          add_section "🎉 New Features" "^feat:"
-          add_section "🛠️ Bug Fixes & Improvements" "^fix:"
-          add_section "🔧 Refactors" "^refactor:"
-          add_section "🎨 Style Changes" "^style:"
-          add_section "🚀 Performance Improvements" "^perf:"
-          add_section "🧹 Chores & Documentation" "^(chore|docs):"
-          # Output the generated changelog
-          cat CHANGELOG.md
+          echo "last_sha=$LAST_SHA" >> $GITHUB_OUTPUT
+          echo "Last SHA: $LAST_SHA"
+  
+  generate-changelog:
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    outputs:
+      changelog_content: '${{ steps.generate-changelog.outputs.changelog }}'
+      commit_log: '${{ steps.generate-commit-log.outputs.commit_log }}'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+     
+      - name: Generate Detailed Changelog
+        id: generate-changelog
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+          LAST_SHA: '${{ needs.prepare-release.outputs.last_sha }}'
+        run: >
+          #!/bin/bash
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          LAST_SHA="${LAST_SHA:-$(git rev-list --max-parents=0 HEAD)}"
 
-      # Step 1: Upload Changelog.md as Artifact
-      - name: Upload Changelog.md as Artifact
-        id: upload-artifact
+          # Initialize changelog
+          echo "## $CURRENT_TAG Changelog" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+
+          # Fetch all commits since last SHA
+          changelog_content=$(git log $LAST_SHA..HEAD --pretty=format:"● %s ~%an
+          [֍](https://github.com/RyanYuuki/AnymeX/commit/%H)" | 
+
+          # Replace pull request references with links
+          sed -E
+          's/#([0-9]+)/[#\1](https:\/\/github.com\/RyanYuuki\/AnymeX\/pull\/\1)/g')
+
+          # URL-encode newlines for GitHub Actions
+          changelog_content="${changelog_content//'%'/'%25'}"
+          changelog_content="${changelog_content//$'\n'/'%0A'}"
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$changelog_content" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          # Append to CHANGELOG.md
+          git log $LAST_SHA..HEAD --pretty=format:"*
+          [`%h`](https://github.com/RyanYuuki/AnymeX/commit/%h): %s" >>
+          CHANGELOG.md
+
+
+          # Output the generated changelog
+
+          cat CHANGELOG.md
+    
+      - name: Generate Commit Log
+        id: generate-commit-log
+        run: |
+          changelog_content="${{ steps.generate-changelog.outputs.changelog }}"
+          echo "commit_log=${changelog_content}" >> $GITHUB_OUTPUT
+     
+      - name: Upload Changelog
         uses: actions/upload-artifact@v4
         with:
           name: Changelog
-          path: Changelog.md  # Path to your Changelog.md
-          
+          path: CHANGELOG.md
+
   build-android:
     runs-on: ubuntu-latest
     needs: generate-changelog
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-
+    
       - name: Setup Java
         uses: actions/setup-java@v3
         with:
-          distribution: "adopt"
-          java-version: "17"
-
+          distribution: adopt
+          java-version: '17'
+   
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.3"
-
+          flutter-version: 3.22.3
+    
       - name: Get Dependencies
         run: flutter pub get
-
+    
       - name: Build Android with Split ABI
         run: flutter build apk --split-per-abi
-
+  
       - name: Rename APKs
-        run: |
-          mv build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk build/app/outputs/flutter-apk/AnymeX-Android-armeabi-v7a.apk
-          mv build/app/outputs/flutter-apk/app-arm64-v8a-release.apk build/app/outputs/flutter-apk/AnymeX-Android-arm64.apk
-          mv build/app/outputs/flutter-apk/app-x86_64-release.apk build/app/outputs/flutter-apk/AnymeX-Android-x86_64.apk
+        run: >
+          mv build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+          build/app/outputs/flutter-apk/AnymeX-Android-armeabi-v7a.apk
+
+          mv build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          build/app/outputs/flutter-apk/AnymeX-Android-arm64.apk
+
+          mv build/app/outputs/flutter-apk/app-x86_64-release.apk
+          build/app/outputs/flutter-apk/AnymeX-Android-x86_64.apk
+    
       - name: Build Universal APK
         run: flutter build apk --release
-
+    
       - name: Rename Universal APK
-        run: mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/AnymeX-Android-universal.apk
-
+        run: >-
+          mv build/app/outputs/flutter-apk/app-release.apk
+          build/app/outputs/flutter-apk/AnymeX-Android-universal.apk
+   
       - name: Release Android APKs
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "build/app/outputs/flutter-apk/AnymeX-Android-*.apk"
-          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: build/app/outputs/flutter-apk/AnymeX-Android-*.apk
+          token: '${{ secrets.GITHUB_TOKEN }}'
           allowUpdates: true
-          tag: ${{ github.ref_name }}
-
+          tag: '${{ github.ref_name }}'
+ 
   build-ios:
     runs-on: macos-latest
     needs: generate-changelog
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-
+   
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.3"
-
+          flutter-version: 3.22.3
+     
       - name: Get Dependencies
         run: flutter pub get
-
+     
       - name: Build iOS
         run: |
           flutter build ios --release --no-codesign
@@ -126,14 +175,14 @@ jobs:
           cd ..
           zip -r AnymeX-iOS-${{ github.ref_name }}.ipa Payload
           mv AnymeX-iOS-${{ github.ref_name }}.ipa ../../../
-          
+     
       - name: Release iOS IPA
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "AnymeX-iOS-*.ipa"
-          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: AnymeX-iOS-*.ipa
+          token: '${{ secrets.GITHUB_TOKEN }}'
           allowUpdates: true
-          tag: ${{ github.ref_name }}
+          tag: '${{ github.ref_name }}'
 
   build-linux:
     runs-on: ubuntu-latest
@@ -141,128 +190,177 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-
+     
       - name: Install Dependencies
-        run: |
+        run: >
           sudo apt-get update
-          sudo apt-get install -y ninja-build cmake clang mpv libgtk-3-dev libblkid-dev liblzma-dev pkg-config libmpv-dev webkit2gtk-4.1 dpkg-dev
+
+          sudo apt-get install -y ninja-build cmake clang mpv libgtk-3-dev
+          libblkid-dev liblzma-dev pkg-config libmpv-dev webkit2gtk-4.1 dpkg-dev
+     
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.3"
-
+          flutter-version: 3.22.3
       - name: Replace pubspec.yaml with Desktop Version
         run: cp pubspec_desktop.yaml pubspec.yaml
-
+      
       - name: Get Dependencies
         run: flutter pub get
-
+     
       - name: Replace video file extensions for desktops
-        run: |
-          mv lib/pages/Desktop/video_controls.darts lib/pages/Desktop/video_controls.dart  
-          mv lib/pages/Desktop/watch_page.darts lib/pages/Desktop/watch_page.dart
+        run: >
+          mv lib/pages/Desktop/video_controls.darts
+          lib/pages/Desktop/video_controls.dart  
+
+          mv lib/pages/Desktop/watch_page.darts
+          lib/pages/Desktop/watch_page.dart
       - name: Replace main.dart with Desktop Version
         run: mv lib/main.darts lib/main.dart
-
+      
       - name: Build Linux
         run: flutter build linux --release
-
+      
       - name: Zip Linux Artifacts
         run: |
           cd build/linux/x64/release
           cp ../../../../linuxLibs/* bundle/lib/
           zip -r ../../../../AnymeX-Linux.zip .
+     
       - name: Release Linux Build
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "AnymeX-Linux.zip"
-          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: AnymeX-Linux.zip
+          token: '${{ secrets.GITHUB_TOKEN }}'
           allowUpdates: true
-          tag: ${{ github.ref_name }}
-
+          tag: '${{ github.ref_name }}'
+  
   build-windows:
     runs-on: windows-latest
     needs: generate-changelog
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-
+   
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.3"
-
+          flutter-version: 3.22.3
+    
       - name: Replace pubspec.yaml with Desktop Version
         run: Copy-Item -Path pubspec_desktop.yaml -Destination pubspec.yaml -Force
-
+    
       - name: Replace main.dart with Desktop Version
         run: Move-Item -Path lib\main.darts -Destination lib\main.dart -Force
-
+    
       - name: Replace video file extensions for desktops
-        run: |
-          Move-Item -Path lib\pages\Desktop\video_controls.darts -Destination lib\pages\Desktop\video_controls.dart -Force
-          Move-Item -Path lib\pages\Desktop\watch_page.darts -Destination lib\pages\Desktop\watch_page.dart -Force
+        run: >
+          Move-Item -Path lib\pages\Desktop\video_controls.darts -Destination
+          lib\pages\Desktop\video_controls.dart -Force
+
+          Move-Item -Path lib\pages\Desktop\watch_page.darts -Destination
+          lib\pages\Desktop\watch_page.dart -Force
+    
       - name: Get Dependencies
         run: flutter pub get
-
+     
       - name: Build Windows
         run: flutter build windows --release
-
+     
       - name: Create ZIP file for Windows Build
         run: |
           cd build/windows/x64/runner/Release
           Compress-Archive -Path * -DestinationPath AnymeX-Windows.zip
+    
       - name: Setup Inno Setup
         run: choco install innosetup -y
-
+     
       - name: Build Installer with Inno Setup
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" inno.iss
+     
       - name: Release Windows Builds
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "build/windows/x64/runner/Release/AnymeX-Windows.zip,output/AnymeX-Setup.exe"
-          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: >-
+            build/windows/x64/runner/Release/AnymeX-Windows.zip,output/AnymeX-Setup.exe
+          token: '${{ secrets.GITHUB_TOKEN }}'
           allowUpdates: true
-          tag: ${{ github.ref_name }}
-
+          tag: '${{ github.ref_name }}'
+ 
   build-macos:
     runs-on: macos-latest
     needs: generate-changelog
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-
+    
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.22.3"
-
+          flutter-version: 3.22.3
+     
       - name: Replace pubspec.yaml with Desktop Version
         run: cp pubspec_desktop.yaml pubspec.yaml
-
+     
       - name: Replace main.dart with Desktop Version
         run: mv lib/main.darts lib/main.dart
-
+     
       - name: Replace video file extensions for desktops
-        run: |
-          mv lib/pages/Desktop/video_controls.darts lib/pages/Desktop/video_controls.dart  
-          mv lib/pages/Desktop/watch_page.darts lib/pages/Desktop/watch_page.dart
-          
+        run: >
+          mv lib/pages/Desktop/video_controls.darts
+          lib/pages/Desktop/video_controls.dart  
+
+          mv lib/pages/Desktop/watch_page.darts
+          lib/pages/Desktop/watch_page.dart
+      
       - name: Get Dependencies
         run: flutter pub get
-
+      
       - name: Build macOS
         run: flutter build macos --release
-
+     
       - name: Create DMG file for macOS Build
-        run: |
+        run: >
           mkdir -p build/macos/Release
-          hdiutil create -volname "AnymeX" -srcfolder build/macos/Build/Products/Release/AnymeX.app -ov -format UDZO build/macos/Release/AnymeX.dmg
+
+          hdiutil create -volname "AnymeX" -srcfolder
+          build/macos/Build/Products/Release/AnymeX.app -ov -format UDZO
+          build/macos/Release/AnymeX.dmg
+      
       - name: Release macOS Builds
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "build/macos/Release/AnymeX.dmg"
-          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: build/macos/Release/AnymeX.dmg
+          token: '${{ secrets.GITHUB_TOKEN }}'
           allowUpdates: true
-          tag: ${{ github.ref_name }}
+          tag: '${{ github.ref_name }}'
+  
+  notify-release:
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - generate-changelog
+      - build-android
+      - build-ios
+      - build-linux
+      - build-windows
+      - build-macos
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Prepare Discord and Telegram Notification
+        env:
+          COMMIT_LOG: '${{ needs.generate-changelog.outputs.commit_log }}'
+          CURRENT_TAG: '${{ github.ref_name }}'
+        run: "# Prepare Discord embed\ndiscord_data=$(jq -nc \\\n  --arg commit_log \"$COMMIT_LOG\" \\\n  --arg tag \"$CURRENT_TAG\" \\\n  '{\n    \"content\": \"<@&1225347048321191996>\",\n    \"embeds\": [\n      {\n        \"title\": \"New AnymeX Release: '\"$CURRENT_TAG\"'\",\n        \"description\": \"New release with the following changes:\\n\\n\"+$commit_log,\n        \"color\": 5814783,\n        \"fields\": [\n          {\n            \"name\": \"Platforms\",\n            \"value\": \"✅ Android\\n✅ iOS\\n✅ Linux\\n✅ Windows\\n✅ macOS\",\n            \"inline\": true\n          }\n        ]\n      }\n    ]\n  }')\n\n# Send Discord notification\ncurl -H \"Content-Type: application/json\" \\\n     -d \"$discord_data\" \\\n     ${{ secrets.DISCORD_WEBHOOK }}\n\n# Prepare Telegram notification\ntelegram_message=\"\U0001F680 *New AnymeX Release: $CURRENT_TAG*\n\nChangelog:\n${COMMIT_LOG//%0A/\n}\"\n\n# Send Telegram notification\ncurl -X POST \\\n  \"https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage\" \\\n  -d \"chat_id=-1002117798698&text=$(printf '%s' \"$telegram_message\" | jq -sRr @uri)&parse_mode=Markdown\"\n"
+     
+      - name: Save Current SHA
+        run: 'echo ${{ github.sha }} > last_sha.txt'
+        
+      - name: Upload Current SHA as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: last-sha
+          path: last_sha.txt
