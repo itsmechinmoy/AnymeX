@@ -1,10 +1,11 @@
 name: Build and Release AnymeX
+
 'on':
   push:
     tags:
-      - v*
+      - "v*"
   
-  workflow_dispatch: null
+  workflow_dispatch:
 
 jobs:
   prepare-release:
