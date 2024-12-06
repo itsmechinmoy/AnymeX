@@ -66,8 +66,10 @@ jobs:
       - name: Decode and Format Release Notes
         id: format_notes
         run: |
-          FORMATTED_NOTES=$(cat release_notes.txt | sed '/^$/d' | tr -s '\n')
-          echo "FORMATTED_NOTES=${FORMATTED_NOTES}" >> $GITHUB_ENV
+          # Read and process release notes to remove empty lines and normalize spacing
+          FORMATTED_NOTES=$(cat release_notes.txt | sed '/^$/d' | tr -s '\n' | sed "s/'/'\\\\''/g")
+          # Wrap the notes with single quotes to ensure safe handling of special characters
+          echo "FORMATTED_NOTES='$FORMATTED_NOTES'" >> $GITHUB_ENV
 
       - name: Determine Webhook
         id: determine_webhook
