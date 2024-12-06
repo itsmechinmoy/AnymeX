@@ -66,9 +66,10 @@ jobs:
       - name: Decode and Format Release Notes
         id: format_notes
         run: |
-          echo "Original Release Notes: $(cat release_notes.txt)"
-          FORMATTED_NOTES=$(cat release_notes.txt | sed '/^$/d' | tr -s '\n' | sed "s/'/\\\\'/g" | sed 's/\\/\\\\/g')
-          echo "Formatted Release Notes: $FORMATTED_NOTES"
+          # Read release notes and escape HTML special characters
+          FORMATTED_NOTES=$(cat release_notes.txt | sed 's/&/&amp;/g' | sed 's/</&lt;/g' | sed 's/>/&gt;/g' | sed 's/"/&quot;/g' | sed "s/'/&apos;/g")
+          # Remove extra blank lines and reduce consecutive newlines
+          FORMATTED_NOTES=$(echo "$FORMATTED_NOTES" | sed '/^$/d' | tr -s '\n')
           echo "FORMATTED_NOTES=${FORMATTED_NOTES}" >> $GITHUB_ENV
 
       - name: Determine Webhook
