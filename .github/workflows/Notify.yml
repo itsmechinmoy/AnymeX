@@ -49,16 +49,21 @@ jobs:
         id: release_info
         run: |
           curl -s "https://api.github.com/repos/RyanYuuki/AnymeX/releases/tags/${{ env.LATEST_TAG }}" -o release.json
-          
           # Escape special characters and preserve line breaks
-          RELEASE_NOTES=$(jq -r '.body' release.json | sed 's/"/\\"/g')
-          
+          RELEASE_NOTES=$(jq -r '.body // ""' release.json | sed 's/"/\\"/g')
           RELEASE_NAME=$(jq -r '.name // "No release name"' release.json)
           ASSET_URLS=$(jq -r '.assets[]?.browser_download_url // empty' release.json)
-          
           echo "RELEASE_NAME=${RELEASE_NAME}" >> $GITHUB_ENV
-          echo "RELEASE_NOTES=${RELEASE_NOTES}" >> $GITHUB_ENV
+          # Encode release notes for environment export
+          echo "${RELEASE_NOTES}" | base64 > release_notes_base64.txt
+          echo "RELEASE_NOTES_BASE64=$(cat release_notes_base64.txt)" >> $GITHUB_ENV
           echo "${ASSET_URLS}" > assets.txt
+      
+      - name: Decode Release Notes
+        id: decode_notes
+        run: |
+          FORMATTED_NOTES=$(echo "${{ env.RELEASE_NOTES_BASE64 }}" | base64 --decode | sed '/^$/d' | tr -s '\n')
+          echo "FORMATTED_NOTES=${FORMATTED_NOTES}" >> $GITHUB_ENV
 
       - name: Determine Webhook
         id: determine_webhook
