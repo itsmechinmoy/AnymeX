@@ -10,7 +10,7 @@ on:
 
 jobs:
   notify:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    #if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -50,8 +50,8 @@ jobs:
         run: |
           curl -s "https://api.github.com/repos/RyanYuuki/AnymeX/releases/tags/${{ env.LATEST_TAG }}" -o release.json
           
-          # Format release notes with proper line breaks and commit-like styling
-          RELEASE_NOTES=$(jq -r '.body' release.json | sed -E 's/^/● /g; s/$/\n/g')
+          # Escape special characters and preserve line breaks
+          RELEASE_NOTES=$(jq -r '.body' release.json | sed 's/"/\\"/g')
           
           RELEASE_NAME=$(jq -r '.name // "No release name"' release.json)
           ASSET_URLS=$(jq -r '.assets[]?.browser_download_url // empty' release.json)
@@ -73,10 +73,16 @@ jobs:
             echo "ROLE_MENTION=<@&1313346791479054456>" >> $GITHUB_ENV
           fi
 
+      - name: Prepare Release Notes
+        id: prepare_notes
+        run: |
+          # Replace multiple newlines with a single newline
+          FORMATTED_NOTES=$(echo "${{ env.RELEASE_NOTES }}" | sed '/^$/d' | tr -s '\n')
+          echo "FORMATTED_NOTES=${FORMATTED_NOTES}" >> $GITHUB_ENV
+
       - name: Send Release Notes to Telegram
         run: |
-          FORMATTED_NOTES=$(echo "${{ env.RELEASE_NOTES }}" | sed 's/$/\\n/g' | tr -d '\n')
-          MESSAGE="🚀 <b>New Release: ${RELEASE_NAME}</b>\n\n<b>Changelog:</b>\n${FORMATTED_NOTES}"
+          MESSAGE="🚀 <b>New Release: ${RELEASE_NAME}</b>\n\n<b>Changelog:</b>\n${{ env.FORMATTED_NOTES }}"
           
           curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -H "Content-Type: application/json" \
@@ -84,10 +90,9 @@ jobs:
 
       - name: Send Release Notes to Discord
         run: |
-          # Prepare Discord payload with rich embed
           DISCORD_DATA=$(jq -n \
             --arg title "New Release: $RELEASE_NAME" \
-            --arg description "${{ env.RELEASE_NOTES }}" \
+            --arg description "${{ env.FORMATTED_NOTES }}" \
             --arg color "5814783" \
             --arg role_mention "${{ env.ROLE_MENTION }}" \
             '{
