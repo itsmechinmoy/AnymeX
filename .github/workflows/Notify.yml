@@ -113,9 +113,13 @@ jobs:
           
       - name: Send Release Notes to Telegram
         run: |
-          # Fetch the release notes in the same way as the original code
+          # Format release notes
           tel_commit="${RELEASE_NOTES}"
+          
+          # Replace the starting '###' with '**' for markdown formatting
           tel_commit=$(echo "$tel_commit" | sed 's/^### /**/g')
+          
+          # Handle blockquotes (lines starting with '>')
           tel_commit=$(echo "$tel_commit" | awk '
             BEGIN { quote_block = ""; current_section = "" }
             {
@@ -127,41 +131,27 @@ jobs:
                 current_section = $0 
               } else if ($0 ~ /^>/) { 
                 quote_block = quote_block "\n" substr($0, 3) 
-              } 
+              } else {
+                # Print normal lines (non-quote and non-heading lines)
+                if (quote_block != "") {
+                  print current_section "\n>>> " quote_block
+                  quote_block = ""
+                }
+                print $0
+              }
             }
             END { 
               if (current_section != "") 
                 print current_section "\n>>> " quote_block 
             }
           ')
-          tel_commit=$(echo "$tel_commit" | sed -E 's/\): [^:]+:/)/g')
-          MESSAGE=" **🚀 New Release: ${RELEASE_NAME} **
-          Release Notes:
+      
+          # Create the message with release notes
+          MESSAGE=" **🚀 New Release: ${RELEASE_NAME}**\n
+          Release Notes:\n
           $tel_commit"
-          
+      
           # Send the message to Telegram
-          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "chat_id": "${{ secrets.TELEGRAM_CHAT_ID }}",
-              "message_thread_id": "${{ env.TELEGRAM_THREAD_ID }}",
-              "text": "'"$MESSAGE"'",
-              "parse_mode": "Markdown"
-            }'
-
-      - name: Send Assets to Telegram
-        run: |
-          MESSAGE="🎉 *${{ env.LATEST_TAG }} Released* 🎉
-          🔹 ${{ env.apk_arm64_message }} : **APK (arm64)**
-          🔹 ${{ env.apk_armeabi_message }} : **APK (armeabi-v7a)**
-          🔹 ${{ env.apk_universal_message }} : **APK (universal)**
-          🔹 ${{ env.apk_x86_64_message }} : **APK (x86 & x64)**
-          🔹 ${{ env.windows_message }} : **Windows Zip**
-          🔹 ${{ env.setup_message }} : **Windows Setup**
-          🔹 ${{ env.linux_message }} : **Linux**
-          🔹 ${{ env.ios_message }} : **iOS**
-          🔹 ${{ env.macos_message }} : **macOS**"
-
           curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -H "Content-Type: application/json" \
             -d '{
