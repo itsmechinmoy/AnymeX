@@ -97,9 +97,9 @@ jobs:
         id: determine_webhook
         run: |
           if [[ "${RELEASE_NAME}" == *alpha ]]; then
-            echo "DISCORD_WEBHOOK_URL=${{ secrets.DISCORD_WEBHOOK_ALPHA }}" >> $GITHUB_ENV
+            echo "DISCORD_WEBHOOK_URL=${{ secrets.DISCORD_WEBHOOK }}" >> $GITHUB_ENV
           else
-            echo "DISCORD_WEBHOOK_URL=${{ secrets.DISCORD_WEBHOOK_BETA }}" >> $GITHUB_ENV
+            echo "DISCORD_WEBHOOK_URL=${{ secrets.DISCORD_WEBHOOK }}" >> $GITHUB_ENV
           fi
     
       - name: Determine Topic
