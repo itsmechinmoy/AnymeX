@@ -119,12 +119,12 @@ jobs:
           # Replace ### with ** for section headers
           tel_commit=$(echo "$tel_commit" | sed 's/^### /**/g')
           
-          # Add quotes to commits, handling different commit hash formats
+          # Add quotes to commits
           tel_commit=$(echo "$tel_commit" | sed -E '
-            /^\* \[.*\]:/ s/^\* \[([^]]*)\]: /`\1: /
-            /^\* \[.*\]/ s/^\* \[([^]]*)\] /`\1 /
-            /^\* / s/^\* ([0-9a-f]{7}) /`\1 /
-            /^\* / s/^\* /`/
+            /^\* \[.*\]:/ s/^\* \[([^]]*)\]: />  \1: /
+            /^\* \[.*\]/ s/^\* \[([^]]*)\] />  \1 /
+            /^\* / s/^\* ([0-9a-f]{7}) />  \1 /
+            /^\* / s/^\* />  /
           ')
           
           # Replace ): with )
