@@ -116,11 +116,16 @@ jobs:
           # Assuming RELEASE_NOTES contains your original content
           tel_commit="${RELEASE_NOTES}"
         
-          # Replace ### with **
+          # Replace ### with ** for section headers
           tel_commit=$(echo "$tel_commit" | sed 's/^### /**/g')
           
-          # Replace individual commits with quoted commits
-          tel_commit=$(echo "$tel_commit" | sed 's/^* /`/g')
+          # Add quotes to commits, handling different commit hash formats
+          tel_commit=$(echo "$tel_commit" | sed -E '
+            /^\* \[.*\]:/ s/^\* \[([^]]*)\]: /`\1: /
+            /^\* \[.*\]/ s/^\* \[([^]]*)\] /`\1 /
+            /^\* / s/^\* ([0-9a-f]{7}) /`\1 /
+            /^\* / s/^\* /`/
+          ')
           
           # Replace ): with )
           tel_commit=$(echo "$tel_commit" | sed -E 's/\): [^:]+:/)/g')
