@@ -116,26 +116,21 @@ jobs:
           # Assuming RELEASE_NOTES contains your original content
           tel_commit="${RELEASE_NOTES}"
         
-          # Replace ### with ** for section headers
-          tel_commit=$(echo "$tel_commit" | sed 's/^### /**/g')
-          
-          # Add quotes to commits
+          # Format commits to be properly quoted
           tel_commit=$(echo "$tel_commit" | sed -E '
-            /^\* \[.*\]:/ s/^\* \[([^]]*)\]: />  \1: /
-            /^\* \[.*\]/ s/^\* \[([^]]*)\] />  \1 /
-            /^\* / s/^\* ([0-9a-f]{7}) />  \1 /
-            /^\* / s/^\* />  /
+            s/^-\s*([0-9a-f]{7})\s\((https:\/\/[^\)]+)\)\s(.+)$/>  \1 (\2) \3/g
           ')
           
-          # Replace ): with )
+          # Replace section headers ### with ** for Markdown
+          tel_commit=$(echo "$tel_commit" | sed 's/^### /**/g')
+          
+          # Replace other Markdown quirks (optional if needed)
           tel_commit=$(echo "$tel_commit" | sed -E 's/\): [^:]+:/)/g')
           
-          # Display or use the modified text
-          echo "$tel_commit"
-          MESSAGE=" **🚀 New Release: ${RELEASE_NAME} **
-          
-          Release Notes: $tel_commit"
+          # Construct the final message
+          MESSAGE="**🚀 New Release: ${RELEASE_NAME}**\n\nRelease Notes:\n$tel_commit"
         
+          # Send the message to Telegram
           curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -H "Content-Type: application/json" \
             -d '{
@@ -144,6 +139,7 @@ jobs:
               "text": "'"$MESSAGE"'",
               "parse_mode": "Markdown"
             }'
+
       
       - name: Send Assets to Telegram
         run: |
