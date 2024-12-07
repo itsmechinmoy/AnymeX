@@ -119,25 +119,19 @@ jobs:
           # Replace ### with ** for section headers
           tel_commit=$(echo "$tel_commit" | sed 's/^### /**/g')
           
-          # Specifically target and quote commit lines
+          # Add quotes to commits
           tel_commit=$(echo "$tel_commit" | sed -E '
-              # Quote lines that start with a commit hash or GitHub commit reference
-              /^[*>]* *[0-9a-f]{7}/ s/^[*>]* *([0-9a-f]{7}.*)/> *"\1"*/
-              # Quote lines that look like commit messages after a hash
-              /^[*>]* *[0-9a-f]{7}.*:/ s/^[*>]* *[0-9a-f]{7}.*: */> *"/
-              # Remove merge commit lines if present
-              /^[*>]* *Merge.*/ d
+            /^\* \[.*\]:/ s/^\* \[([^]]*)\]: />  \1: /
+            /^\* \[.*\]/ s/^\* \[([^]]*)\] />  \1 /
+            /^\* / s/^\* ([0-9a-f]{7}) />  \1 /
+            /^\* / s/^\* />  /
           ')
           
-          # Replace ): with ) and clean up any extra formatting
-          tel_commit=$(echo "$tel_commit" | sed -E '
-              s/\): [^:]+:/)/g
-              s/^ *\* *//  # Remove leading asterisks and spaces
-          ')
+          # Replace ): with )
+          tel_commit=$(echo "$tel_commit" | sed -E 's/\): [^:]+:/)/g')
           
           # Display or use the modified text
           echo "$tel_commit"
-          
           MESSAGE=" **🚀 New Release: ${RELEASE_NAME} **
           
           Release Notes: $tel_commit"
