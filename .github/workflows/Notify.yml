@@ -113,45 +113,57 @@ jobs:
           
       - name: Send Release Notes to Telegram
         run: |
-          # Format release notes
+          # Fetch the release notes in the same way as the original code
           tel_commit="${RELEASE_NOTES}"
           
-          # Replace the starting '###' with '**' for markdown formatting
+          # Replace '###' with '**' for highlighting
           tel_commit=$(echo "$tel_commit" | sed 's/^### /**/g')
           
-          # Handle blockquotes (lines starting with '>')
+          # Format the release notes using blockquotes and highlight the sections
           tel_commit=$(echo "$tel_commit" | awk '
             BEGIN { quote_block = ""; current_section = "" }
             {
               if ($0 ~ /^\*\*/) { 
                 if (current_section != "") { 
-                  print current_section "\n>>> " quote_block "\n"; 
+                  print current_section "\n> " quote_block "\n";  # Added blockquote here
                   quote_block = "" 
                 } 
                 current_section = $0 
               } else if ($0 ~ /^>/) { 
-                quote_block = quote_block "\n" substr($0, 3) 
-              } else {
-                # Print normal lines (non-quote and non-heading lines)
-                if (quote_block != "") {
-                  print current_section "\n>>> " quote_block
-                  quote_block = ""
-                }
-                print $0
-              }
+                quote_block = quote_block "\n" substr($0, 3)  # Keep lines in quote block
+              } 
             }
             END { 
               if (current_section != "") 
-                print current_section "\n>>> " quote_block 
+                print current_section "\n> " quote_block  # Blockquote for last section
             }
           ')
-      
-          # Create the message with release notes
-          MESSAGE=" **🚀 New Release: ${RELEASE_NAME}**\n
-          Release Notes:\n
-          $tel_commit"
-      
-          # Send the message to Telegram
+          
+          # Send the formatted release notes to Telegram
+          MESSAGE=" **🚀 New Release: ${RELEASE_NAME} **\nRelease Notes:\n$tel_commit"
+          
+          curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "chat_id": "${{ secrets.TELEGRAM_CHAT_ID }}",
+              "message_thread_id": "${{ env.TELEGRAM_THREAD_ID }}",
+              "text": "'"$MESSAGE"'",
+              "parse_mode": "Markdown"
+            }'
+
+      - name: Send Assets to Telegram
+        run: |
+          MESSAGE="🎉 *${{ env.LATEST_TAG }} Released* 🎉
+          🔹 ${{ env.apk_arm64_message }} : **APK (arm64)**
+          🔹 ${{ env.apk_armeabi_message }} : **APK (armeabi-v7a)**
+          🔹 ${{ env.apk_universal_message }} : **APK (universal)**
+          🔹 ${{ env.apk_x86_64_message }} : **APK (x86 & x64)**
+          🔹 ${{ env.windows_message }} : **Windows Zip**
+          🔹 ${{ env.setup_message }} : **Windows Setup**
+          🔹 ${{ env.linux_message }} : **Linux**
+          🔹 ${{ env.ios_message }} : **iOS**
+          🔹 ${{ env.macos_message }} : **macOS**"
+
           curl -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             -H "Content-Type: application/json" \
             -d '{
