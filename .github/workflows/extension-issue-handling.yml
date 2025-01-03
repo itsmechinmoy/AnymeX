@@ -28,92 +28,128 @@ jobs:
                     extensionNames.add(extension.name.toLowerCase());
                   }
                 });
+                console.log(`✅ Successfully fetched extensions from ${repo}`);
               } catch (error) {
-                console.error(`Error fetching ${repo}:`, error);
+                console.error(`❌ Error fetching ${repo}:`, error);
               }
             }
             
-            return Array.from(extensionNames);
+            console.log('📝 Found extensions:', Array.from(extensionNames).join(', '));
+            core.setOutput('extension_names', Array.from(extensionNames).join(','));
 
       - name: Check Issue Content
         id: check-issue
         uses: actions/github-script@v6
         with:
           script: |
-            const extensionNames = ${{ steps.fetch-extensions.outputs.result }};
-            if (!extensionNames || !Array.isArray(extensionNames)) {
-              console.log('No extensions found');
-              return {
-                isExtensionIssue: false,
-                detectedExtension: null
-              };
+            function normalizeExtensionName(name) {
+              return name
+                .toLowerCase()
+                .replace(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
             }
 
-            function normalizeText(text) {
-              return text.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
-            }
-
-            function findExtensionMatch(content, extensions) {
-              const words = normalizeText(content).split(' ');
-              return extensions.find(ext => words.includes(normalizeText(ext)));
+            function findExtensionMatch(content, extensionNames) {
+              const words = normalizeExtensionName(content).split(' ');
+              for (const extension of extensionNames) {
+                const normalizedExtension = normalizeExtensionName(extension);
+                // Check if extension name appears as a complete word or phrase
+                if (content.toLowerCase().includes(` ${normalizedExtension} `) ||
+                    content.toLowerCase().startsWith(`${normalizedExtension} `) ||
+                    content.toLowerCase().endsWith(` ${normalizedExtension}`)) {
+                  return extension;
+                }
+              }
+              return null;
             }
 
             const regexPatterns = [
-                ".*(extension|extensions|repo|repositories|source|sources|stream|server).*not working.*",
-                ".*(extension|extensions|repo|repositories|source|sources|stream|server).*doesn't work.*",
-                ".*(extension|extensions|repo|repositories|source|sources|stream|server).*does not work.*",
-                ".*(extension|extensions|repo|repositories|source|sources|stream|server).*cant work.*",
-                ".*(extension|extensions|repo|repositories|source|sources|stream|server).*can't work.*",
-                ".*(no|can't find|cannot find|missing).*extension(s)?.*",
-                ".*(no|can't find|cannot find|missing).*repo(s|sitories)?.*",
-                ".*(no|can't find|cannot find|missing).*source(s)?.*",
-                ".*(no|can't find|cannot find|missing).*stream(s)?.*",
-                ".*(no|can't find|cannot find|missing).*server.*",
-                ".*(server|stream).*not available.*",
-                ".*(server|stream).*unavailable.*",
-                ".*(server|stream).*down.*",
-                ".*{.*}.*(extension|repo|repositories|source|sources).*not working.*",
-                ".*{.*}.*(extension|repo|repositories|source|sources).*issue.*",
-                ".*{.*}.*(extension|repo|repositories|source|sources).*problem.*",
-                ".*(extension|extensions|repo|repositories|source|sources|stream|server).*not available.*",
-                ".*(extension|extensions|repo|repositories|source|sources|stream|server).*missing.*",
-                ".*nothing came up.*source.*look elsewhere.*",
-                ".*no results.*source.*look somewhere else.*",
-                ".*no content.*source.*"
-              ];
-
-            function hasIssuePattern(text) {
-              return regexPatterns.some(pattern => pattern.test(text));
-            }
-
-            const issueTitle = context.payload.issue.title || '';
+              ".*(extension|extensions|repo|repositories|source|sources|stream|server).*not working.*",
+              ".*(extension|extensions|repo|repositories|source|sources|stream|server).*doesn't work.*",
+              ".*(extension|extensions|repo|repositories|source|sources|stream|server).*does not work.*",
+              ".*(extension|extensions|repo|repositories|source|sources|stream|server).*cant work.*",
+              ".*(extension|extensions|repo|repositories|source|sources|stream|server).*can't work.*",
+              ".*(no|can't find|cannot find|missing).*extension(s)?.*",
+              ".*(no|can't find|cannot find|missing).*repo(s|sitories)?.*",
+              ".*(no|can't find|cannot find|missing).*source(s)?.*",
+              ".*(no|can't find|cannot find|missing).*stream(s)?.*",
+              ".*(no|can't find|cannot find|missing).*server.*",
+              ".*(server|stream).*not available.*",
+              ".*(server|stream).*unavailable.*",
+              ".*(server|stream).*down.*",
+              ".*{.*}.*(extension|repo|repositories|source|sources).*not working.*",
+              ".*{.*}.*(extension|repo|repositories|source|sources).*issue.*",
+              ".*{.*}.*(extension|repo|repositories|source|sources).*problem.*",
+              ".*(extension|extensions|repo|repositories|source|sources|stream|server).*not available.*",
+              ".*(extension|extensions|repo|repositories|source|sources|stream|server).*missing.*",
+              ".*nothing came up.*source.*look elsewhere.*",
+              ".*no results.*source.*look somewhere else.*",
+              ".*no content.*source.*"
+            ];
+            
+            const extensionNames = process.env.EXTENSION_NAMES.split(',');
+            const issueTitle = context.payload.issue.title;
             const issueBody = context.payload.issue.body || '';
-
-            const extension = findExtensionMatch(issueTitle, extensionNames) || 
-                            findExtensionMatch(issueBody, extensionNames);
             
-            const hasPattern = hasIssuePattern(issueTitle) || hasIssuePattern(issueBody);
-            
-            return {
-              isExtensionIssue: !!(extension && hasPattern),
-              detectedExtension: extension || null
-            };
+            let isExtensionIssue = false;
+            let detectedExtension = null;
 
-      - name: Process Extension Issue
-        if: fromJSON(steps.check-issue.outputs.result).isExtensionIssue
+            // First check for extension name
+            detectedExtension = findExtensionMatch(issueTitle, extensionNames) || 
+                              findExtensionMatch(issueBody, extensionNames);
+            
+            // Only proceed with regex check if an extension was found
+            if (detectedExtension) {
+              for (const pattern of regexPatterns) {
+                const regex = new RegExp(pattern, 'i');
+                if (regex.test(issueTitle.toLowerCase()) || regex.test(issueBody.toLowerCase())) {
+                  isExtensionIssue = true;
+                  break;
+                }
+              }
+            }
+            
+            core.setOutput('is_extension_issue', isExtensionIssue.toString());
+            core.setOutput('detected_extension', detectedExtension || 'Unknown Extension');
+        env:
+          EXTENSION_NAMES: ${{ steps.fetch-extensions.outputs.extension_names }}
+
+      - name: Comment and Close Extension Issue
+        if: steps.check-issue.outputs.is_extension_issue == 'true'
         uses: actions/github-script@v6
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const result = ${{ steps.check-issue.outputs.result }};
+            const issueNumber = context.issue.number;
+            const reportedExtension = "${{ steps.check-issue.outputs.detected_extension || 'Unknown Extension' }}";
+            
+            const currentLabels = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber
+            });
+            
+            for (const label of currentLabels.data) {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                name: label.name
+              });
+            }
+            
             await github.rest.issues.addLabels({
-              ...context.repo,
-              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
               labels: ['wontfix']
             });
             
             await github.rest.issues.createComment({
-              ...context.repo,
-              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
               body: `# Not Our Business!
                     AnymeX doesn't maintain extensions.
                     If the extension doesn't work, we cannot help you.
@@ -121,7 +157,8 @@ jobs:
             });
             
             await github.rest.issues.update({
-              ...context.repo,
-              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
               state: 'closed'
             });
