@@ -43,24 +43,32 @@ jobs:
         with:
           script: |
             function normalizeExtensionName(name) {
-              return name
+              const original = name;
+              const normalized = name
                 .toLowerCase()
                 .replace(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]/g, ' ')
                 .replace(/\s+/g, ' ')
                 .trim();
+              console.log(`🔍 Normalizing: "${original}" -> "${normalized}"`);
+              return normalized;
             }
 
             function findExtensionMatch(content, extensionNames) {
-              const words = normalizeExtensionName(content).split(' ');
+              console.log('\n📖 Checking content:', content);
               for (const extension of extensionNames) {
                 const normalizedExtension = normalizeExtensionName(extension);
+                console.log(`\n⚡ Checking against extension: ${extension}`);
+                
                 // Check if extension name appears as a complete word or phrase
                 if (content.toLowerCase().includes(` ${normalizedExtension} `) ||
                     content.toLowerCase().startsWith(`${normalizedExtension} `) ||
                     content.toLowerCase().endsWith(` ${normalizedExtension}`)) {
+                  console.log(`✅ Complete word/phrase match found! "${extension}"`);
                   return extension;
                 }
+                console.log(`❌ No match found for "${extension}"`);
               }
+              console.log('❌ No extension match found in content');
               return null;
             }
 
@@ -92,23 +100,43 @@ jobs:
             const issueTitle = context.payload.issue.title;
             const issueBody = context.payload.issue.body || '';
             
+            console.log('\n🎯 Checking Issue:');
+            console.log('Title:', issueTitle);
+            console.log('Body:', issueBody);
+            
             let isExtensionIssue = false;
             let detectedExtension = null;
 
-            // First check for extension name
+            console.log('\n🔍 Step 1: Checking for extension matches...');
             detectedExtension = findExtensionMatch(issueTitle, extensionNames) || 
                               findExtensionMatch(issueBody, extensionNames);
             
-            // Only proceed with regex check if an extension was found
+            console.log('\n🔍 Step 2: Checking regex patterns (only if extension found)...');
             if (detectedExtension) {
+              console.log(`Extension "${detectedExtension}" found, checking regex patterns...`);
               for (const pattern of regexPatterns) {
                 const regex = new RegExp(pattern, 'i');
-                if (regex.test(issueTitle.toLowerCase()) || regex.test(issueBody.toLowerCase())) {
+                if (regex.test(issueTitle.toLowerCase())) {
+                  console.log(`✅ Regex pattern matched in title: "${pattern}"`);
+                  isExtensionIssue = true;
+                  break;
+                }
+                if (regex.test(issueBody.toLowerCase())) {
+                  console.log(`✅ Regex pattern matched in body: "${pattern}"`);
                   isExtensionIssue = true;
                   break;
                 }
               }
+              if (!isExtensionIssue) {
+                console.log('❌ No regex patterns matched');
+              }
+            } else {
+              console.log('❌ No extension found, skipping regex checks');
             }
+            
+            console.log('\n📊 Final Results:');
+            console.log('Is Extension Issue:', isExtensionIssue);
+            console.log('Detected Extension:', detectedExtension || 'None');
             
             core.setOutput('is_extension_issue', isExtensionIssue.toString());
             core.setOutput('detected_extension', detectedExtension || 'Unknown Extension');
@@ -123,6 +151,8 @@ jobs:
           script: |
             const issueNumber = context.issue.number;
             const reportedExtension = "${{ steps.check-issue.outputs.detected_extension || 'Unknown Extension' }}";
+            console.log('🔒 Closing issue:', issueNumber);
+            console.log('Extension reported:', reportedExtension);
             
             const currentLabels = await github.rest.issues.listLabelsOnIssue({
               owner: context.repo.owner,
@@ -162,3 +192,5 @@ jobs:
               issue_number: issueNumber,
               state: 'closed'
             });
+            
+            console.log('✅ Issue processed and closed successfully');
