@@ -19,11 +19,11 @@
 # AnymeX
 **AnymeX** is a multiservice tracking client, with [**AniList**](https://anilist.co/), [**MyAnimeList**](https://myanimelist.net/), and [**Simkl**](https://simkl.com/) support!
 > [!NOTE]
-> AnymeX is a hybrid media tracker designed for AniList, MyAnimeList, and Simkl. It is intended for tracking purposes only.
+> AnymeX is intended for tracking purposes only.
 >
-> This app does **not** host, provide, or maintain any streaming content or extensions.
+> It does **not** host, provide, or maintain any streaming content or extensions.
 >
-> Users are fully responsible for how they use AnymeX. The developer disclaims all liability for misuse or legal issues. Legal concerns should be addressed to third-party sources, not AnymeX.
+> Users are fully responsible for how they use this app. The developer disclaims all liability for misuse or legal issues. Legal concerns should be addressed to third-party sources, not AnymeX.
 
 ## Downloads
 <div align="center">
