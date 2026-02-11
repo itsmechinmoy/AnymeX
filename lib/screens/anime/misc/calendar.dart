@@ -4,6 +4,7 @@ import 'package:anymex/controllers/service_handler/service_handler.dart';
 import 'package:anymex/controllers/services/anilist/calendar_data.dart';
 import 'package:anymex/controllers/settings/methods.dart';
 import 'package:anymex/models/Media/media.dart';
+import 'dart:ui';
 import 'package:anymex/screens/anime/details_page.dart';
 import 'package:anymex/screens/anime/misc/dub_service.dart';
 import 'package:anymex/utils/function.dart';
@@ -652,18 +653,12 @@ class _BlurAnimeCardState extends State<BlurAnimeCard> {
           borderRadius: BorderRadius.circular(12.multiplyRadius()),
           child: Stack(children: [
             Positioned.fill(
-              child: AnymeXImage(
-                imageUrl: widget.data.cover ?? widget.data.poster,
-                radius: 0,
-                width: double.infinity,
-              ),
-            ),
-            Positioned.fill(
-              child: RepaintBoundary(
-                child: Blur(
-                  blur: 4,
-                  blurColor: Colors.transparent,
-                  child: Container(),
+              child: ImageFiltered(
+                imageFilter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: AnymeXImage(
+                  imageUrl: widget.data.poster ?? widget.data.cover ?? "",
+                  radius: 0,
+                  width: double.infinity,
                 ),
               ),
             ),
