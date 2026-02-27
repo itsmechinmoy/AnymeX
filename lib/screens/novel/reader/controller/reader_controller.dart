@@ -1,12 +1,12 @@
+import 'dart:async';
 import 'package:anymex/utils/logger.dart';
-
 import 'package:anymex/controllers/offline/offline_storage_controller.dart';
+import 'package:anymex/controllers/sync/gist_sync_controller.dart';
 import 'package:anymex/models/Media/media.dart';
 import 'package:anymex/database/isar_models/chapter.dart';
 import 'package:anymex/screens/manga/controller/reader_controller.dart';
 import 'package:dartotsu_extension_bridge/dartotsu_extension_bridge.dart';
 import 'package:flutter/material.dart';
-import 'package:anymex/utils/theme_extensions.dart';
 import 'package:get/get.dart';
 
 class NovelReaderController extends GetxController {
@@ -49,9 +49,12 @@ class NovelReaderController extends GetxController {
   // Auto-hide timer
   RxBool autoHideEnabled = true.obs;
 
-  // Page Indicatorssss
+  // Page Indicators
   RxDouble progress = 0.0.obs;
   RxInt consecutiveReads = 0.obs;
+  RxBool autoScrollEnabled = false.obs;
+  RxDouble autoScrollSpeed = 3.0.obs;
+  Timer? _autoScrollTimer;
 
   Rx<Chapter> savedChapter = Chapter().obs;
 
@@ -66,8 +69,10 @@ class NovelReaderController extends GetxController {
 
   @override
   void onClose() {
-    _saveTracking();
+    _saveTracking(syncToCloud: false);
+    unawaited(_syncCloudProgressOnExit());
     scrollController.removeListener(_scrollListener);
+    _stopAutoScroll();
     super.onClose();
   }
 
@@ -127,13 +132,100 @@ class NovelReaderController extends GetxController {
       loadingState.value = LoadingState.loaded;
 
       await _waitForScrollAndJump();
+      _resumeFromCloudIfNewer();
     } catch (e) {
       Logger.i(e.toString());
       loadingState.value = LoadingState.error;
     }
   }
 
-  void _saveTracking() {
+  Future<void> _resumeFromCloudIfNewer() async {
+    final ctrl = Get.isRegistered<GistSyncController>()
+        ? Get.find<GistSyncController>()
+        : null;
+    if (ctrl == null || !ctrl.isLoggedIn.value || !ctrl.syncEnabled.value) {
+      return;
+    }
+    try {
+      final chapter = currentChapter.value;
+      if (chapter.number == null) return;
+      final localUpdated = chapter.lastReadTime ?? 0;
+
+      final entry = await ctrl
+          .fetchNewerChapterProgress(
+            mediaId: media.id,
+            mediaType: 'novel',
+            chapterNumber: chapter.number!,
+            localUpdatedAt: localUpdated,
+          )
+          .timeout(const Duration(seconds: 4), onTimeout: () => null);
+
+      if (entry?.scrollOffset != null) {
+        final offset = entry!.scrollOffset!;
+        await Future.delayed(const Duration(milliseconds: 200));
+        if (scrollController.hasClients &&
+            offset <= scrollController.position.maxScrollExtent) {
+          scrollController.animateTo(
+            offset,
+            duration: const Duration(milliseconds: 400),
+            curve: Curves.easeInOut,
+          );
+        }
+      }
+    } catch (e) {
+      Logger.i('[GistSync] _resumeFromCloudIfNewer: $e');
+    }
+  }
+
+  void toggleAutoScroll() {
+    autoScrollEnabled.value = !autoScrollEnabled.value;
+    if (autoScrollEnabled.value) {
+      _startAutoScroll();
+    } else {
+      _stopAutoScroll();
+    }
+  }
+
+  void setAutoScrollSpeed(double speed) {
+    autoScrollSpeed.value = speed;
+    if (autoScrollEnabled.value) {
+      _stopAutoScroll();
+      _startAutoScroll();
+    }
+  }
+
+  void _startAutoScroll() {
+    _stopAutoScroll();
+    final pixelsPerSecond = Get.height / autoScrollSpeed.value;
+    const tickMs = 50;
+    _autoScrollTimer = Timer.periodic(
+      const Duration(milliseconds: tickMs),
+      (_) {
+        if (!autoScrollEnabled.value) {
+          _stopAutoScroll();
+          return;
+        }
+        if (!scrollController.hasClients) return;
+        final current = scrollController.offset;
+        final max = scrollController.position.maxScrollExtent;
+        if (current >= max) {
+          _stopAutoScroll();
+          autoScrollEnabled.value = false;
+          return;
+        }
+        final newOffset =
+            (current + pixelsPerSecond * tickMs / 1000).clamp(0.0, max);
+        scrollController.jumpTo(newOffset);
+      },
+    );
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+  }
+
+  void _saveTracking({bool syncToCloud = true}) {
     consecutiveReads.value++;
     savedChapter.value = offlineStorageController.getReadChapter(
           media.id,
@@ -146,9 +238,57 @@ class NovelReaderController extends GetxController {
             media, chapters, currentChapter.value, source);
         offlineStorageController.addOrUpdateReadChapter(
             media.id, currentChapter.value,
-            source: source);
+            source: source, syncToCloud: syncToCloud);
       });
     }
+  }
+
+  Future<void> _syncCloudProgressOnExit() async {
+    final syncCtrl = Get.isRegistered<GistSyncController>()
+        ? Get.find<GistSyncController>()
+        : null;
+    if (syncCtrl == null) {
+      return;
+    }
+
+    final shouldRemove =
+        syncCtrl.autoDeleteCompletedOnExit.value && _hasFinishedCurrentMedia();
+
+    await syncCtrl.syncChapterProgressOnExit(
+      mediaId: media.id,
+      malId: media.idMal,
+      mediaType: 'novel',
+      chapter: currentChapter.value,
+      isCompleted: shouldRemove,
+    );
+  }
+
+  bool _hasFinishedCurrentMedia() {
+    final chapter = currentChapter.value;
+    final chapterNumber = chapter.number;
+    final pageNumber = chapter.pageNumber;
+    final totalPages = chapter.totalPages;
+
+    if (chapterNumber == null ||
+        pageNumber == null ||
+        totalPages == null ||
+        totalPages <= 0 ||
+        pageNumber < totalPages) {
+      return false;
+    }
+
+    final totalChapters = double.tryParse(media.totalChapters ?? '');
+    if (totalChapters != null && totalChapters > 0) {
+      return chapterNumber >= totalChapters;
+    }
+
+    for (final item in chapters) {
+      final itemNumber = item.number;
+      if (itemNumber != null && itemNumber > chapterNumber) {
+        return false;
+      }
+    }
+    return chapters.isNotEmpty;
   }
 
   String _buildHtml(String input) {

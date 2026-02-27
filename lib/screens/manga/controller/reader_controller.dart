@@ -7,6 +7,7 @@ import 'package:anymex/controllers/offline/offline_storage_controller.dart';
 import 'package:anymex/controllers/service_handler/params.dart';
 import 'package:anymex/controllers/service_handler/service_handler.dart';
 import 'package:anymex/controllers/source/source_controller.dart';
+import 'package:anymex/controllers/sync/gist_sync_controller.dart';
 import 'package:anymex/database/data_keys/keys.dart';
 import 'package:anymex/database/isar_models/chapter.dart';
 import 'package:anymex/models/Media/media.dart';
@@ -134,6 +135,10 @@ class ReaderController extends GetxController with WidgetsBindingObserver {
 
   final RxBool volumeKeysEnabled = false.obs;
   final RxBool invertVolumeKeys = false.obs;
+
+  final RxBool autoScrollEnabled = false.obs;
+  final RxDouble autoScrollSpeed = 3.0.obs;
+  Timer? _autoScrollTimer;
 
   final RxBool showControls = true.obs;
 
@@ -374,6 +379,7 @@ class ReaderController extends GetxController with WidgetsBindingObserver {
     _disableVolumeKeys();
 
     pageController?.dispose();
+    _stopAutoScroll();
     super.onClose();
   }
 
@@ -443,11 +449,14 @@ class ReaderController extends GetxController with WidgetsBindingObserver {
       }
 
       Logger.i('Performing final save');
-      _saveTracking();
-      if (!shouldTrack) return;
+      _saveTracking(syncToCloud: false);
       final chapter = currentChapter.value;
-      if (chapter != null &&
-          chapter.pageNumber != null &&
+      if (chapter == null) return;
+
+      unawaited(_syncCloudProgressOnExit(chapter));
+
+      if (!shouldTrack) return;
+      if (chapter.pageNumber != null &&
           chapter.totalPages != null &&
           chapter.number != null &&
           chapter.pageNumber == chapter.totalPages) {
@@ -472,13 +481,64 @@ class ReaderController extends GetxController with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _syncCloudProgressOnExit(Chapter chapter) async {
+    final syncCtrl = Get.isRegistered<GistSyncController>()
+        ? Get.find<GistSyncController>()
+        : null;
+    if (syncCtrl == null) {
+      return;
+    }
+
+    final shouldRemove = syncCtrl.autoDeleteCompletedOnExit.value &&
+        _hasFinishedCurrentMedia(chapter);
+
+    await syncCtrl.syncChapterProgressOnExit(
+      mediaId: media.id,
+      malId: media.idMal,
+      mediaType: media.mediaType == ItemType.novel ? 'novel' : 'manga',
+      chapter: chapter,
+      isCompleted: shouldRemove,
+    );
+  }
+
+  bool _hasFinishedCurrentMedia(Chapter chapter) {
+    final chapterNumber = chapter.number;
+    final pageNumber = chapter.pageNumber;
+    final totalPages = chapter.totalPages;
+
+    if (chapterNumber == null ||
+        pageNumber == null ||
+        totalPages == null ||
+        totalPages <= 0 ||
+        pageNumber < totalPages) {
+      return false;
+    }
+
+    final totalChapters = double.tryParse(media.totalChapters ?? '');
+    if (totalChapters != null && totalChapters > 0) {
+      return chapterNumber >= totalChapters;
+    }
+
+    for (final item in chapterList) {
+      final itemNumber = item.number;
+      if (itemNumber != null && itemNumber > chapterNumber) {
+        return false;
+      }
+    }
+    return chapterList.isNotEmpty;
+  }
+
   bool _canSaveProgress({Chapter? manualChapter, int? manualPage}) {
     final chapter = manualChapter ?? currentChapter.value;
     final page = manualPage ?? currentPageIndex.value;
     return chapter != null && _isValidPageNumber(page) && pageList.isNotEmpty;
   }
 
-  void _saveTracking({Chapter? manualChapter, int? manualPage}) {
+  void _saveTracking({
+    Chapter? manualChapter,
+    int? manualPage,
+    bool syncToCloud = true,
+  }) {
     final chapter = manualChapter ?? currentChapter.value;
     if (chapter == null) return;
 
@@ -489,7 +549,70 @@ class ReaderController extends GetxController with WidgetsBindingObserver {
     }
 
     offlineStorageController.addOrUpdateManga(media, chapterList, chapter);
-    offlineStorageController.addOrUpdateReadChapter(media.id, chapter);
+    offlineStorageController.addOrUpdateReadChapter(
+      media.id,
+      chapter,
+      syncToCloud: syncToCloud,
+    );
+  }
+
+  void toggleAutoScroll() {
+    autoScrollEnabled.value = !autoScrollEnabled.value;
+    if (autoScrollEnabled.value) {
+      _startAutoScroll();
+    } else {
+      _stopAutoScroll();
+    }
+    savePreferences();
+  }
+
+  void setAutoScrollSpeed(double speed) {
+    autoScrollSpeed.value = speed;
+    if (autoScrollEnabled.value) {
+      _stopAutoScroll();
+      _startAutoScroll();
+    }
+    savePreferences();
+  }
+
+  void _startAutoScroll() {
+    _stopAutoScroll();
+    if (readingLayout.value == MangaPageViewMode.continuous) {
+      final pixelsPerSecond = Get.height / autoScrollSpeed.value;
+      const tickMs = 50;
+      _autoScrollTimer = Timer.periodic(
+        const Duration(milliseconds: tickMs),
+        (_) {
+          if (!autoScrollEnabled.value) {
+            _stopAutoScroll();
+            return;
+          }
+          final offset = pixelsPerSecond * tickMs / 1000;
+          final isReversed = readingDirection.value.reversed;
+          scrollOffsetController?.animateScroll(
+            offset: isReversed ? -offset : offset,
+            duration: const Duration(milliseconds: tickMs),
+            curve: Curves.linear,
+          );
+        },
+      );
+    } else {
+      _autoScrollTimer = Timer.periodic(
+        Duration(milliseconds: (autoScrollSpeed.value * 1000).toInt()),
+        (_) {
+          if (!autoScrollEnabled.value) {
+            _stopAutoScroll();
+            return;
+          }
+          navigateForward();
+        },
+      );
+    }
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
   }
 
   void navigateToChapter(int index) async {
@@ -559,6 +682,8 @@ class ReaderController extends GetxController with WidgetsBindingObserver {
     overscrollToChapter.value = ReaderKeys.overscrollToChapter.get<bool>(true);
     preloadPages.value = ReaderKeys.preloadPages.get<int>(3);
     showPageIndicator.value = ReaderKeys.showPageIndicator.get<bool>(false);
+    autoScrollEnabled.value = ReaderKeys.autoScrollEnabled.get<bool>(false);
+    autoScrollSpeed.value = ReaderKeys.autoScrollSpeed.get<double>(3.0);
     // Both features: crop images AND volume keys
     cropImages.value = ReaderKeys.cropImages.get<bool>(false);
     volumeKeysEnabled.value = ReaderKeys.volumeKeysEnabled.get<bool>(false);
@@ -588,6 +713,8 @@ class ReaderController extends GetxController with WidgetsBindingObserver {
     ReaderKeys.overscrollToChapter.set(overscrollToChapter.value);
     ReaderKeys.preloadPages.set(preloadPages.value);
     ReaderKeys.showPageIndicator.set(showPageIndicator.value);
+    ReaderKeys.autoScrollEnabled.set(autoScrollEnabled.value);
+    ReaderKeys.autoScrollSpeed.set(autoScrollSpeed.value);
     // Both features: crop images AND volume keys
     ReaderKeys.cropImages.set(cropImages.value);
     ReaderKeys.volumeKeysEnabled.set(volumeKeysEnabled.value);
@@ -958,6 +1085,8 @@ class ReaderController extends GetxController with WidgetsBindingObserver {
       offlineStorageController.addOrUpdateManga(media, chapterList, chapter);
     }
 
+    _resumeFromCloudIfNewer();
+
     if (!shouldTrack) return;
 
     final chapterNumber = chapter.number?.toInt();
@@ -975,6 +1104,40 @@ class ReaderController extends GetxController with WidgetsBindingObserver {
             syncIds: [media.idMal],
             isAnime: false));
       }
+    }
+  }
+
+  Future<void> _resumeFromCloudIfNewer() async {
+    final ctrl = Get.isRegistered<GistSyncController>()
+        ? Get.find<GistSyncController>()
+        : null;
+    if (ctrl == null || !ctrl.isLoggedIn.value || !ctrl.syncEnabled.value) {
+      return;
+    }
+    try {
+      final chapter = currentChapter.value;
+      if (chapter == null || chapter.number == null) return;
+      final localUpdated = chapter.lastReadTime ?? 0;
+
+      final entry = await ctrl
+          .fetchNewerChapterProgress(
+            mediaId: media.id,
+            malId: media.idMal.toString(),
+            mediaType: 'manga',
+            chapterNumber: chapter.number!,
+            localUpdatedAt: localUpdated,
+          )
+          .timeout(const Duration(seconds: 4), onTimeout: () => null);
+
+      if (entry != null && entry.pageNumber != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (entry.pageNumber! > 0 && entry.pageNumber! <= pageList.length) {
+            navigateToPage(entry.pageNumber! - 1);
+          }
+        });
+      }
+    } catch (e) {
+      Logger.i('[MangaReader] Failed to resume progress from cloud: $e');
     }
   }
 
